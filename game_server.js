@@ -312,10 +312,13 @@ _rl.on('line', function(rawLine) {
 
     if (msg.type === 'step') {
         var a = msg.action;
+        var n = (msg.n && msg.n > 0) ? msg.n : 1;  // game frames per step (default 1)
+        // Set inputs ONCE.  engineUpdate clears p (pressed) and r (released) flags
+        // at the end of each tick but leaves d (held) alone, so subsequent frames
+        // correctly see the key as "held" rather than "newly pressed".  Re-calling
+        // _setAIInput between frames would falsely re-trigger keypress events.
         _setAIInput(a[0], a[1], a[2], a[3], a[4]);
-        _step();
-        // Note: engineUpdate already clears p/r flags at end of each tick —
-        // no need to clear manually here.
+        for (var _si = 0; _si < n; _si++) _step();
         process.stdout.write(JSON.stringify({ type: 'state', state: _getGameState() }) + '\\n');
         return;
     }

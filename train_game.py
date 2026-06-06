@@ -157,16 +157,18 @@ def _latest_checkpoint() -> str | None:
 
 
 # ── env factory ──────────────────────────────────────────────────────────────
-def make_env(headless: bool, backend: str = "node"):
+def make_env(headless: bool, backend: str = "node", action_repeat: int = 3):
     def _init():
         if backend == "node":
-            return Monitor(NodeEnv(GAME_PATH))
-        return Monitor(SpaceHuggersEnv(GAME_PATH, headless=headless))
+            return Monitor(NodeEnv(GAME_PATH, action_repeat=action_repeat))
+        return Monitor(SpaceHuggersEnv(GAME_PATH, headless=headless,
+                                       action_repeat=action_repeat))
     return _init
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
-def main(total_target: int, n_envs: int, headless: bool, backend: str = "node"):
+def main(total_target: int, n_envs: int, headless: bool,
+         backend: str = "node", action_repeat: int = 3):
     os.makedirs(MODEL_DIR, exist_ok=True)
     os.makedirs(LOG_DIR,   exist_ok=True)
 
@@ -181,19 +183,20 @@ def main(total_target: int, n_envs: int, headless: bool, backend: str = "node"):
         return
 
     # Build environments
-    print(f"Backend: {backend}  |  {n_envs} env(s)")
+    print(f"Backend: {backend}  |  {n_envs} env(s)  |  action_repeat={action_repeat}")
     if n_envs == 1:
         if backend == "node":
-            env = Monitor(NodeEnv(GAME_PATH))
+            env = Monitor(NodeEnv(GAME_PATH, action_repeat=action_repeat))
         else:
-            env = Monitor(SpaceHuggersEnv(GAME_PATH, headless=headless))
+            env = Monitor(SpaceHuggersEnv(GAME_PATH, headless=headless,
+                                          action_repeat=action_repeat))
     else:
         if backend == "node":
-            factories = [make_env(headless=True, backend="node") for _ in range(n_envs)]
+            factories = [make_env(headless=True, backend="node",
+                                  action_repeat=action_repeat) for _ in range(n_envs)]
         else:
-            # Playwright: env 0 can be headed for watching; rest stay headless
-            factories = [make_env(headless=(i > 0 or headless), backend="playwright")
-                         for i in range(n_envs)]
+            factories = [make_env(headless=(i > 0 or headless), backend="playwright",
+                                  action_repeat=action_repeat) for i in range(n_envs)]
         env = SubprocVecEnv(factories)
 
     ckpt = _latest_checkpoint()
@@ -299,7 +302,12 @@ if __name__ == "__main__":
     ap.add_argument("--backend",  type=str, default="node",
                     choices=["node", "playwright"],
                     help="node (fast, default) or playwright (browser)")
+    ap.add_argument("--repeat",   type=int, default=3,
+                    help="game frames per step (default 3 = ~50ms game time). "
+                         "Higher = fewer pipe round-trips, more game throughput. "
+                         "Match training: node default=3, playwright default=1.")
     args = ap.parse_args()
 
     target = FOREVER if args.forever else args.total
-    main(target, args.envs, args.headless.lower() != "false", args.backend)
+    main(target, args.envs, args.headless.lower() != "false",
+         args.backend, args.repeat)

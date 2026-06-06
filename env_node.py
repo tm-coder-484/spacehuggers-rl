@@ -36,13 +36,17 @@ class NodeEnv(gym.Env):
 
     def __init__(self,
                  game_path: str,
+                 action_repeat: int = 3,
                  restart_every: int = 500,
                  step_timeout: float = 5.0):
         """
         game_path     : path to SpaceHuggers-main directory
-        restart_every : restart the Node process every N episodes
-                        (prevents memory growth; 0 = never restart)
-        step_timeout  : seconds before a step() is considered hung
+        action_repeat : game frames per step (default 3 = ~50 ms game time, matching
+                        the Playwright env's frame_ms=50 training baseline).
+                        Higher = fewer pipe round-trips → more game throughput.
+                        E.g. action_repeat=5 → ~400+ game fps per env.
+        restart_every : restart the Node process every N episodes (0 = never)
+        step_timeout  : seconds before a step is considered hung
         """
         super().__init__()
         self.game_path     = str(Path(game_path).resolve())
@@ -54,6 +58,7 @@ class NodeEnv(gym.Env):
             low=-5.0, high=5.0, shape=(OBS_DIM,), dtype=np.float32
         )
 
+        self.action_repeat = max(1, action_repeat)
         self._proc: subprocess.Popen | None = None
 
         # episode state
@@ -187,7 +192,8 @@ class NodeEnv(gym.Env):
 
     def step(self, action):
         m, v, sh, dg, gr = (int(x) for x in action)
-        resp = self._rpc({"type": "step", "action": [m, v, sh, dg, gr]})
+        resp = self._rpc({"type": "step", "action": [m, v, sh, dg, gr],
+                          "n": self.action_repeat})
         s    = resp["state"] if resp else None
 
         obs = self._to_obs(s)
