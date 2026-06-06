@@ -206,7 +206,7 @@ def main(total_target: int, n_envs: int, headless: bool, backend: str = "node"):
         # At 10M+ steps we want 0.005 — commit rather than explore randomly.
         model.ent_coef = 0.005
         label = "forever" if total_target >= FOREVER else f"{total_target:,}"
-        print(f"Resuming: {ckpt}.zip  |  done {steps_done:,}  |  target {label}  |  ent_coef→0.005")
+        print(f"Resuming: {ckpt}.zip  |  done {steps_done:,}  |  target {label}  |  ent_coef=0.005")
     else:
         sps_est = n_envs * 15
         h_est   = remaining / sps_est / 3600 if total_target < FOREVER else None

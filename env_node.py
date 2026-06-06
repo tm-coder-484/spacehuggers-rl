@@ -82,28 +82,29 @@ class NodeEnv(gym.Env):
         def _drain_stderr(proc):
             try:
                 for raw in proc.stderr:
-                    line = raw.decode(errors='replace').rstrip()
-                    if '[game_server] ready' in line:
-                        return   # stop reading — server is up
-                    sys.stderr.write("[node] " + line + "\n")
+                    sys.stderr.write("[node] " + raw.decode(errors='replace').rstrip() + "\n")
             except Exception:
                 pass
         t = threading.Thread(target=_drain_stderr, args=(self._proc,), daemon=True)
         t.start()
 
-        # Block until ready signal arrives on stderr (the drain thread reads it)
-        # or timeout.  Simple approach: just do a ping — Node handles it once up.
-        deadline = time.time() + 20.0
+        # Wait for server to be ready — use a raw ping loop that does NOT
+        # trigger _rpc's auto-restart logic (which would loop infinitely during
+        # the 2-3 s Node.js startup time on Windows).
+        deadline = time.time() + 25.0
         while time.time() < deadline:
             if self._proc.poll() is not None:
                 raise RuntimeError("game_server.js exited immediately at startup")
             try:
-                resp = self._rpc({"type": "ping"})
-                if resp and resp.get("type") == "pong":
-                    return  # server ready
+                ping_bytes = (json.dumps({"type": "ping"}) + "\n").encode()
+                self._proc.stdin.write(ping_bytes)
+                self._proc.stdin.flush()
+                line = self._proc.stdout.readline()
+                if line and json.loads(line.decode()).get("type") == "pong":
+                    return   # server ready
             except Exception:
-                time.sleep(0.05)
-        raise RuntimeError("game_server.js did not respond within 20 s")
+                time.sleep(0.2)  # Node.js still loading — wait and retry
+        raise RuntimeError("game_server.js did not respond to ping within 25 s")
 
     def _kill(self):
         if self._proc is not None:
