@@ -1,0 +1,14 @@
+{
+  "name": "SpaceHuggers RL",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "postCreateCommand": "bash setup.sh",
+  "forwardPorts": [6006],
+  "portsAttributes": {
+    "6006": { "label": "TensorBoard", "onAutoForward": "openBrowser" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python"]
+    }
+  }
+}

@@ -1,0 +1,18 @@
+# Model checkpoints (large binary files)
+game_models/
+game_logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+venv/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Game (cloned separately via setup.sh)
+SpaceHuggers-main/
