@@ -136,6 +136,7 @@ _INJECT = """
                 enemies:     enemies.slice(0, 5).map(e => [e.x, e.y, e.health]),
                 n_enemies:   enemies.length,
                 grid:        grid,
+                fps:         typeof averageFPS !== 'undefined' ? averageFPS : -1,
             };
         } catch (e) {
             return null;

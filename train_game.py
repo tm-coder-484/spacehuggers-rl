@@ -5,11 +5,16 @@ Usage:
     python train_game.py                      # train / resume (4M step target)
     python train_game.py --forever            # run until Ctrl+C, no step limit
     python train_game.py --total 10000000     # custom target
-    python train_game.py --envs 6             # 6 parallel browsers (recommended)
-    python train_game.py --headless false     # watch one env while training
+    python train_game.py --envs 6             # parallel envs (default 6)
+    python train_game.py --headless false     # watch one env (playwright only)
+    python train_game.py --backend playwright # use Chromium browser backend
 
-Speed estimates (i5-1240p, 6 envs):
-    ~50 sps  →  4-day run ≈ 17.3M steps
+Backends:
+    node       (default) — Node.js headless, ~20-100x faster, ~80 MB/env
+    playwright           — Chromium browser,  ~50 ms/step,   ~500 MB/env
+
+Speed estimates (i5-1240p, 6 envs, node backend):
+    ~500+ sps  →  same 4-day run ≈ 200M+ steps
 
 Saves every 5000 steps.  Keeps last 5 checkpoints.
 Ctrl+C saves immediately — fully resumable.
@@ -35,6 +40,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
 from env import SpaceHuggersEnv
+from env_node import NodeEnv
 
 # ── config ───────────────────────────────────────────────────────────────────
 GAME_PATH  = os.environ.get(
@@ -151,14 +157,16 @@ def _latest_checkpoint() -> str | None:
 
 
 # ── env factory ──────────────────────────────────────────────────────────────
-def make_env(headless: bool):
+def make_env(headless: bool, backend: str = "node"):
     def _init():
+        if backend == "node":
+            return Monitor(NodeEnv(GAME_PATH))
         return Monitor(SpaceHuggersEnv(GAME_PATH, headless=headless))
     return _init
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
-def main(total_target: int, n_envs: int, headless: bool):
+def main(total_target: int, n_envs: int, headless: bool, backend: str = "node"):
     os.makedirs(MODEL_DIR, exist_ok=True)
     os.makedirs(LOG_DIR,   exist_ok=True)
 
@@ -173,13 +181,20 @@ def main(total_target: int, n_envs: int, headless: bool):
         return
 
     # Build environments
+    print(f"Backend: {backend}  |  {n_envs} env(s)")
     if n_envs == 1:
-        env = Monitor(SpaceHuggersEnv(GAME_PATH, headless=headless))
+        if backend == "node":
+            env = Monitor(NodeEnv(GAME_PATH))
+        else:
+            env = Monitor(SpaceHuggersEnv(GAME_PATH, headless=headless))
     else:
-        # Env 0 can be headed for watching; rest stay headless
-        factories = [make_env(headless=(i > 0 or headless)) for i in range(n_envs)]
+        if backend == "node":
+            factories = [make_env(headless=True, backend="node") for _ in range(n_envs)]
+        else:
+            # Playwright: env 0 can be headed for watching; rest stay headless
+            factories = [make_env(headless=(i > 0 or headless), backend="playwright")
+                         for i in range(n_envs)]
         env = SubprocVecEnv(factories)
-        print(f"Running {n_envs} parallel browser environments")
 
     ckpt = _latest_checkpoint()
     if ckpt:
@@ -279,9 +294,12 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--total",    type=int, default=4_000_000)
     ap.add_argument("--forever",  action="store_true")
-    ap.add_argument("--envs",     type=int, default=1)
+    ap.add_argument("--envs",     type=int, default=6)
     ap.add_argument("--headless", type=str, default="true")
+    ap.add_argument("--backend",  type=str, default="node",
+                    choices=["node", "playwright"],
+                    help="node (fast, default) or playwright (browser)")
     args = ap.parse_args()
 
     target = FOREVER if args.forever else args.total
-    main(target, args.envs, args.headless.lower() != "false")
+    main(target, args.envs, args.headless.lower() != "false", args.backend)
