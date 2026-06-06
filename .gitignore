@@ -1,5 +1,5 @@
-# Model checkpoints (large binary files)
-game_models/
+# Model checkpoints — track latest only, ignore numbered + logs
+game_models/ppo_sh_[0-9]*.zip
 game_logs/
 
 # Python
