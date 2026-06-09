@@ -5,7 +5,7 @@ Reward design philosophy (v3 — clean, no penalty traps):
   Primary signals  : kills (+10), level completion (+150), death (-5)
   Dense shaping    : approach reward ±0.05/step to guide toward enemies
   Mechanic bonuses : fire-dodge (+0.1), ladder use (+0.003/0.015), wall-climb (+0.01)
-  Survival         : +0.002/step
+  Survival         : removed (was +0.002/step — paid for passive turtling on long episodes)
 
   NO action penalties — exploration must remain free.  Penalising actions
   (shoot, grenade, position) was causing entropy collapse: the agent learned
@@ -40,6 +40,11 @@ import gymnasium as gym
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
+# v2 (Tier-2) Dict obs builder + dims, reused from the node-workers env so the
+# browser-rendered watch path produces identical observations to training.
+from env_node_batch import (_to_obs_v2, GRID_W as V2_GRID_W, GRID_H as V2_GRID_H,
+                            GRID_CH_V2, GLOBE_CH, GLOBE_SZ, VEC_DIM_V2)
+
 _INJECT = """
 (function() {
     // Prevent engine from wiping inputData when window loses focus
@@ -64,6 +69,132 @@ _INJECT = """
         isUsingGamepad = 0;
     };
 
+    // ── jump-height model (mirrors game_server_workers.js) ────────────────────
+    // The agent can ascend ~8 tiles through open air from a launch surface, or
+    // climb walls/ladders. An UP move into open air is only valid if a solid/ladder
+    // launch surface lies within _JUMP_REACH below, or a climbable wall is adjacent.
+    window._JUMP_REACH = 8;
+    window._canAscendTo = function(x, y) {
+        if (getTileCollisionData(vec2(x-1,y))>0 || getTileCollisionData(vec2(x+1,y))>0) return true;  // wall-climb
+        for (var k=1; k<=window._JUMP_REACH; k++) {
+            var t=getTileCollisionData(vec2(x, y-k));
+            if (t>0 || t===tileType_ladder) return true;   // solid ground / ladder to launch from
+        }
+        return false;
+    };
+
+    // ── dig-aware geodesic BFS (mirrors game_server_workers.js) ───────────────
+    // Destructible terrain is passable-with-cost = real bullets-to-breach, and
+    // digging is HORIZONTAL only (gun can't shoot up/down). Used for the v2 obs.
+    window._bfsFrom = function(sx, sy, cx, cy, R) {
+        var SZ=2*R+1, minx=cx-R, miny=cy-R, maxx=cx+R, maxy=cy+R;
+        var dd=new Array(SZ*SZ); for (var _i=0;_i<dd.length;_i++) dd[_i]=-1;
+        function gi(x,y){ return (y-miny)*SZ+(x-minx); }
+        function cost(fx, fy, tx, ty){
+            var t=getTileCollisionData(vec2(tx,ty));
+            if (t<=0 || t===tileType_ladder) return 1;   // walk / climb / fall
+            if (tx===fx) return -1;                        // pure vertical into rock: can't dig up/down
+            if (t===tileType_glass) return 1;              // shoot through window (horizontal)
+            if (t===tileType_dirt) return 5;               // dig dirt
+            return 20;                                       // dig base/pipe/solid
+        }
+        var base={dd:dd,SZ:SZ,minx:minx,miny:miny,maxx:maxx,maxy:maxy,gi:gi,ok:false};
+        if (sx<minx||sx>maxx||sy<miny||sy>maxy) return base;
+        var MAXC=96, buckets={};
+        var s0=gi(sx,sy); dd[s0]=0; buckets[0]=[s0];
+        for (var dcur=0; dcur<=MAXC; dcur++) {
+            var bk=buckets[dcur]; if (!bk) continue;
+            for (var bi=0; bi<bk.length; bi++) {
+                var idx=bk[bi];
+                if (dd[idx]!==dcur) continue;
+                var x=minx+(idx%SZ), y=miny+((idx/SZ)|0);
+                for (var ax=-1;ax<=1;ax++) for (var ay=-1;ay<=1;ay++) {
+                    if (!ax && !ay) continue;
+                    var nx=x+ax, ny=y+ay;
+                    if (nx<minx||nx>maxx||ny<miny||ny>maxy) continue;
+                    var nidx=gi(nx,ny);
+                    var c=cost(x,y,nx,ny);
+                    if (c<0) continue;
+                    if (ny>y && getTileCollisionData(vec2(nx,ny))===tileType_empty && !window._canAscendTo(nx,ny)) continue;  // can't jump that high through open air
+                    var nd=dcur+c;
+                    if (nd<=MAXC && (dd[nidx]===-1 || nd<dd[nidx])) {
+                        dd[nidx]=nd;
+                        (buckets[nd]||(buckets[nd]=[])).push(nidx);
+                    }
+                }
+            }
+        }
+        base.ok=true; return base;
+    };
+
+    // ── COARSE global flow-field (mirrors game_server_workers.js) ─────────────
+    // Low-res whole-level BFS (4-tile cells, cached per level) to route the long
+    // way around rock the local field can't see. Used when the fine field fails.
+    window._COARSE_CELL = 4;
+    window._buildCoarseMap = function() {
+        var CC = window._COARSE_CELL;
+        var lx = levelSize ? Math.ceil(levelSize.x) : 200;
+        var ly = levelSize ? Math.ceil(levelSize.y) : 100;
+        var CW = Math.max(1, Math.ceil(lx/CC)), CH = Math.max(1, Math.ceil(ly/CC));
+        var cost = new Array(CW*CH);
+        for (var cy=0; cy<CH; cy++) for (var cx=0; cx<CW; cx++) {
+            var open=0, dirt=0;
+            for (var ty=0; ty<CC; ty++) for (var tx=0; tx<CC; tx++) {
+                var t=getTileCollisionData(vec2(cx*CC+tx, cy*CC+ty));
+                if (t<=0 || t===tileType_ladder || t===tileType_glass) open++;
+                else if (t===tileType_dirt) dirt++;
+            }
+            cost[cy*CW+cx] = open>0 ? 1 : (dirt>0 ? 4 : -1);
+        }
+        return {cost:cost, CW:CW, CH:CH};
+    };
+    window._coarseField = function(px, py, ex, ey) {
+        var res = {dist:1.0, dx:0, dy:0, ok:false};
+        if (!levelSize) return res;
+        var CC = window._COARSE_CELL, NORM = 120, MAXC = 240;
+        if (window._coarseLevel !== level) { window._coarseMap = window._buildCoarseMap(); window._coarseLevel = level; }
+        var cm = window._coarseMap, CW = cm.CW, CH = cm.CH, cost = cm.cost;
+        var sx=Math.floor(px/CC), sy=Math.floor(py/CC), tx=Math.floor(ex/CC), ty=Math.floor(ey/CC);
+        if (sx<0||sx>=CW||sy<0||sy>=CH||tx<0||tx>=CW||ty<0||ty>=CH) return res;
+        var N=CW*CH, dd=new Array(N); for (var i=0;i<N;i++) dd[i]=-1;
+        var buckets={}; dd[sy*CW+sx]=0; buckets[0]=[sy*CW+sx];
+        for (var dcur=0; dcur<=MAXC; dcur++) {
+            var bk=buckets[dcur]; if (!bk) continue;
+            for (var bi=0; bi<bk.length; bi++) {
+                var idx=bk[bi]; if (dd[idx]!==dcur) continue;
+                var x=idx%CW, y=(idx/CW)|0;
+                for (var ax=-1;ax<=1;ax++) for (var ay=-1;ay<=1;ay++) {
+                    if (!ax && !ay) continue;
+                    var nx=x+ax, ny=y+ay;
+                    if (nx<0||nx>=CW||ny<0||ny>=CH) continue;
+                    var c=cost[ny*CW+nx]; if (c<0) continue;
+                    var nidx=ny*CW+nx, nd=dcur+c;
+                    if (nd<=MAXC && (dd[nidx]===-1 || nd<dd[nidx])) { dd[nidx]=nd; (buckets[nd]||(buckets[nd]=[])).push(nidx); }
+                }
+            }
+        }
+        var ed=dd[ty*CW+tx];
+        if (ed<0) return res;
+        res.ok=true; res.dist=Math.min(1, ed/NORM);
+        var bx=tx, by=ty, guard=4000;
+        while (guard-->0) {
+            var cd=dd[by*CW+bx]; if (cd<=0) break;
+            var best=cd, bnx=bx, bny=by;
+            for (var ax=-1;ax<=1;ax++) for (var ay=-1;ay<=1;ay++) {
+                if (!ax && !ay) continue;
+                var nx=bx+ax, ny=by+ay;
+                if (nx<0||nx>=CW||ny<0||ny>=CH) continue;
+                var v=dd[ny*CW+nx];
+                if (v>=0 && v<best) { best=v; bnx=nx; bny=ny; }
+            }
+            if (bnx===bx && bny===by) break;
+            if (best===0) break;
+            bx=bnx; by=bny;
+        }
+        res.dx=Math.sign(bx-sx); res.dy=Math.sign(by-sy);
+        return res;
+    };
+
     window._getGameState = function() {
         try {
             const p = players && players[0];
@@ -71,34 +202,42 @@ _INJECT = """
 
             const lx = levelSize ? levelSize.x : 200;
             const ly = levelSize ? levelSize.y : 100;
+            const facing = p.mirror ? -1 : 1;   // gun fires horizontally this way
 
-            // ── enemies ──────────────────────────────────────────────────────
+            // ── enemies (nearest 10) with shootable + aiming + velocity ───────
             const enemies = [];
             for (const o of engineCollideObjects) {
                 if (o.isCharacter && o.team === team_enemy && !o.isDead()) {
                     const dx = o.pos.x - p.pos.x;
                     const dy = o.pos.y - p.pos.y;
-                    enemies.push({ x: dx/lx, y: dy/ly,
-                                   health: o.health/5, dist: dx*dx+dy*dy });
+                    const sh  = (Math.sign(dx) === facing && Math.abs(dx) < 8 && Math.abs(dy) < 1.2) ? 1 : 0;
+                    const aim = (Math.sign(-dx) === (o.mirror?-1:1)) ? (o.holdingShoot?1.0:0.4) : 0.0;
+                    enemies.push({ x: dx/lx, y: dy/ly, health: o.health/5,
+                                   vx:(o.velocity?o.velocity.x:0)/0.2, vy:(o.velocity?o.velocity.y:0)/0.3,
+                                   shootable: sh, aiming: aim, dist: dx*dx+dy*dy });
                 }
             }
             enemies.sort((a, b) => a.dist - b.dist);
 
             // ── 13x9 tile grid centred on player ─────────────────────────────
-            const GW = 13, GH = 9;
-            const HW = (GW-1)/2, HH = (GH-1)/2;
+            const GW = 13, GH = 9, HW = 6, HH = 4;
             const px = Math.round(p.pos.x);
             const py = Math.round(p.pos.y);
-            const grid = new Array(GW * GH).fill(0);
+            const grid     = new Array(GW * GH).fill(0);   // v1 binary terrain
+            const gTerrain = new Array(GW * GH).fill(0);   // v2 dig-cost terrain
+            const gEnemy   = new Array(GW * GH).fill(0);
+            const gHazard  = new Array(GW * GH).fill(0);
 
             for (let dy = -HH; dy <= HH; dy++) {
                 for (let dx = -HW; dx <= HW; dx++) {
                     const tile = getTileCollisionData(vec2(px+dx, py+dy));
-                    let val = 0;
-                    if      (tile === tileType_ladder) val = -1.0;
-                    else if (tile === tileType_glass)  val =  0.5;
-                    else if (tile > 0)                 val =  1.0;
-                    grid[(dy+HH)*GW + (dx+HW)] = val;
+                    let val = 0, dval = 0;
+                    if      (tile === tileType_ladder) { val = -1.0; dval = -1.0; }
+                    else if (tile === tileType_glass)  { val =  0.5; dval =  0.25; }
+                    else if (tile === tileType_dirt)   { val =  1.0; dval =  0.5;  }
+                    else if (tile > 0)                 { val =  1.0; dval =  1.0;  }
+                    const gidx = (dy+HH)*GW + (dx+HW);
+                    grid[gidx] = val; gTerrain[gidx] = dval;
                 }
             }
 
@@ -109,14 +248,108 @@ _INJECT = """
                     const dx = Math.round(o.pos.x - px);
                     const dy = Math.round(o.pos.y - py);
                     if (Math.abs(dx) <= HW && Math.abs(dy) <= HH) {
-                        grid[(dy+HH)*GW + (dx+HW)] =
-                            o.explosionSize > 0 ? 0.75 : 0.3;
+                        grid[(dy+HH)*GW + (dx+HW)]    = o.explosionSize > 0 ? 0.75 : 0.3;
+                        gHazard[(dy+HH)*GW + (dx+HW)] = o.explosionSize > 0 ? 1.0  : 0.5;
                     }
                 }
             }
+            for (const qe of engineCollideObjects) {        // enemy occupancy channel
+                if (qe.isCharacter && qe.team === team_enemy && !qe.isDead()) {
+                    const dx = Math.round(qe.pos.x - px), dy = Math.round(qe.pos.y - py);
+                    if (Math.abs(dx) <= HW && Math.abs(dy) <= HH)
+                        gEnemy[(dy+HH)*GW + (dx+HW)] = Math.max(0.2, qe.health/5);
+                }
+            }
 
-            const dodgeReady = !p.dodgeRechargeTimer.active() ? 1.0 : 0.0;
-            const onFire     = p.burnTimer.active() ? 1.0 : 0.0;
+            // ── nearest enemy bullets (for the vector) + hazard channel ───────
+            const bullets = [];
+            for (const bb of engineCollideObjects) {
+                if (typeof Bullet !== 'undefined' && bb instanceof Bullet && bb.team === team_enemy) {
+                    const bdx = bb.pos.x - p.pos.x, bdy = bb.pos.y - p.pos.y;
+                    const rdx = Math.round(bb.pos.x - px), rdy = Math.round(bb.pos.y - py);
+                    if (Math.abs(rdx) <= HW && Math.abs(rdy) <= HH) gHazard[(rdy+HH)*GW + (rdx+HW)] = 1.0;
+                    bullets.push({ x: bdx/lx, y: bdy/ly,
+                                   vx:(bb.velocity?bb.velocity.x:0)/0.5, vy:(bb.velocity?bb.velocity.y:0)/0.5,
+                                   dist: bdx*bdx+bdy*bdy });
+                }
+            }
+            bullets.sort((a, b) => a.dist - b.dist);
+
+            // ── geodesic flow field: reach channel + geo_dist + geo_dir ───────
+            const R = 24, GEO_NORM = 48, REACH_NORM = 16;
+            const gReach = new Array(GW * GH).fill(1.0);
+            let geoDist = 1.0, geoDx = 0, geoDy = 0;
+            const fld = window._bfsFrom(px, py, px, py, R);
+            if (fld.ok) {
+                if (enemies.length) {
+                    const ne = enemies[0];
+                    const etx = Math.round(p.pos.x + ne.x*lx), ety = Math.round(p.pos.y + ne.y*ly);
+                    if (etx>=fld.minx && etx<=fld.maxx && ety>=fld.miny && ety<=fld.maxy) {
+                        const ed = fld.dd[fld.gi(etx,ety)];
+                        if (ed >= 0) {
+                            geoDist = Math.min(1, ed/GEO_NORM);
+                            let bx = etx, by = ety, guard = 4000;
+                            while (guard-- > 0) {
+                                const cd = fld.dd[fld.gi(bx,by)];
+                                if (cd <= 0) break;
+                                let best = cd, bnx = bx, bny = by;
+                                for (let ax=-1;ax<=1;ax++) for (let ay=-1;ay<=1;ay++) {
+                                    if (!ax && !ay) continue;
+                                    const nx = bx+ax, ny = by+ay;
+                                    if (nx<fld.minx||nx>fld.maxx||ny<fld.miny||ny>fld.maxy) continue;
+                                    const v = fld.dd[fld.gi(nx,ny)];
+                                    if (v>=0 && v<best) { best=v; bnx=nx; bny=ny; }
+                                }
+                                if (bnx===bx && bny===by) break;
+                                if (best===0) break;
+                                bx = bnx; by = bny;
+                            }
+                            geoDx = Math.sign(bx-px); geoDy = Math.sign(by-py);
+                        }
+                    }
+                }
+                for (let wy=-HH;wy<=HH;wy++) for (let wx=-HW;wx<=HW;wx++) {
+                    const tx = px+wx, ty = py+wy; let val = 1.0;
+                    if (tx>=fld.minx&&tx<=fld.maxx&&ty>=fld.miny&&ty<=fld.maxy) {
+                        const dv = fld.dd[fld.gi(tx,ty)];
+                        if (dv>=0) val = Math.min(1, dv/REACH_NORM);
+                    }
+                    gReach[(wy+HH)*GW + (wx+HW)] = val;
+                }
+            }
+            // Long-range routing: coarse whole-level field when the fine field fails;
+            // straight-line only as a last resort if even the coarse field finds none.
+            var coarseDist = 1.0;
+            if (geoDx===0 && geoDy===0 && enemies.length) {
+                var _ne0 = enemies[0];
+                var _cf = window._coarseField(px, py, p.pos.x + _ne0.x*lx, p.pos.y + _ne0.y*ly);
+                if (_cf.ok && (_cf.dx!==0 || _cf.dy!==0)) {
+                    geoDx = _cf.dx; geoDy = _cf.dy; coarseDist = _cf.dist;
+                } else {
+                    geoDx = Math.sign(_ne0.x); geoDy = Math.sign(_ne0.y);
+                }
+            }
+
+            // ── coarse egocentric global map (3x8x8): terrain, now, memory ────
+            const GG = 8, CELL = 8, half = GG/2;
+            const gTerr = new Array(GG*GG).fill(0), gNow = new Array(GG*GG).fill(0);
+            for (let cyi=0;cyi<GG;cyi++) for (let cxi=0;cxi<GG;cxi++) {
+                const sx = Math.round(p.pos.x + (cxi-half+0.5)*CELL);
+                const sy = Math.round(p.pos.y + (cyi-half+0.5)*CELL);
+                const tt = getTileCollisionData(vec2(sx,sy));
+                gTerr[cyi*GG+cxi] = (tt>0 && tt!==tileType_ladder) ? 1 : 0;
+            }
+            for (const ge of engineCollideObjects) {
+                if (ge.isCharacter && ge.team===team_enemy && !ge.isDead()) {
+                    const gcx = Math.floor((ge.pos.x-p.pos.x)/CELL)+half;
+                    const gcy = Math.floor((ge.pos.y-p.pos.y)/CELL)+half;
+                    if (gcx>=0&&gcx<GG&&gcy>=0&&gcy<GG) gNow[gcy*GG+gcx] = Math.min(1, gNow[gcy*GG+gcx]+0.5);
+                }
+            }
+            if (window._gmemLevel !== level) { window._gmem = new Array(GG*GG).fill(0); window._gmemLevel = level; }
+            const gm = window._gmem;
+            for (let mi=0; mi<GG*GG; mi++) gm[mi] = Math.min(1, gm[mi]*0.97 + gNow[mi]);
+            const globe = gTerr.concat(gNow).concat(gm.slice());
 
             return {
                 px:          p.pos.x / lx,
@@ -126,16 +359,26 @@ _INJECT = """
                 health:      p.health,
                 ground:      p.groundTimer.active() ? 1.0 : 0.0,
                 grenades:    (p.grenadeCount || 0) / 3.0,
-                dodge_ready: dodgeReady,
-                on_fire:     onFire,
+                dodge_ready: !p.dodgeRechargeTimer.active() ? 1.0 : 0.0,
+                on_fire:     p.burnTimer.active() ? 1.0 : 0.0,
                 alive:       !p.isDead(),
                 lives:       playerLives,
                 kills:       totalKills,
                 level:       level,
                 warmup:      levelWarmup ? 1 : 0,
-                enemies:     enemies.slice(0, 5).map(e => [e.x, e.y, e.health]),
+                enemies:     enemies.slice(0, 10).map(e => [e.x, e.y, e.health]),
+                enemy_vels:  enemies.slice(0, 10).map(e => [e.vx, e.vy]),
+                enemies_remaining: (typeof levelEnemyCount!=='undefined'?Math.max(0,levelEnemyCount):0)+enemies.length,
+                facing:      facing,
+                enemy_shootable: enemies.slice(0, 10).map(e => e.shootable),
+                bullets:     bullets.slice(0, 5).map(b => [b.x, b.y, b.vx, b.vy]),
                 n_enemies:   enemies.length,
                 grid:        grid,
+                grid_terrain: gTerrain, grid_enemy: gEnemy, grid_hazard: gHazard,
+                grid_reach:  gReach, geo_dist: geoDist, geo_dir: [geoDx, geoDy],
+                coarse_dist: coarseDist,
+                enemy_aiming: enemies.slice(0, 10).map(e => e.aiming),
+                globe:       globe,
                 fps:         typeof averageFPS !== 'undefined' ? averageFPS : -1,
             };
         } catch (e) {
@@ -143,7 +386,18 @@ _INJECT = """
         }
     };
 
-    window._resetGame = () => resetGame();
+    window._resetGame = () => { window._coarseLevel = null; resetGame(); };
+
+    // Manual state-dump trigger: press 'L' in the game window to flag a dump.
+    // watch_game.py polls window._dumpReq and writes the full state to a log,
+    // so a stuck spot can be captured and inspected exactly.
+    if (!window._dumpHooked) {
+        window._dumpHooked = 1;
+        window._dumpReq = 0;
+        window.addEventListener('keydown', function(e){
+            if (e.key === 'l' || e.key === 'L') window._dumpReq = (window._dumpReq||0) + 1;
+        });
+    }
 
     console.log('[AI] helpers injected');
 })();
@@ -162,25 +416,37 @@ class SpaceHuggersEnv(gym.Env):
                  headless: bool = True,
                  frame_ms: int = 50,
                  action_repeat: int = 1,
-                 restart_every: int = 200):
+                 restart_every: int = 200,
+                 obs_version: int = 1):
         """
         game_path      : path to SpaceHuggers-main/
         headless       : run browser without a window
         frame_ms       : ms to hold each action (50 ms ≈ 3 game frames at 60fps)
         action_repeat  : repeat each action this many sub-frames (1 = no repeat)
         restart_every  : restart browser every N episodes (prevents memory leaks)
+        obs_version    : 1 = flat 141-float Box; 2 = Tier-2 Dict (grid+globe+vector)
         """
         super().__init__()
         self.game_path      = Path(game_path).resolve()
         self.headless       = headless
         self.frame_ms       = frame_ms
         self.restart_every  = restart_every
+        self.obs_version    = obs_version
 
         # [horizontal, vertical, shoot, dodge, grenade]
         self.action_space = gym.spaces.MultiDiscrete([3, 3, 2, 2, 2])
-        self.observation_space = gym.spaces.Box(
-            low=-5.0, high=5.0, shape=(OBS_DIM,), dtype=np.float32
-        )
+        if obs_version == 2:
+            self.observation_space = gym.spaces.Dict({
+                "grid":   gym.spaces.Box(-5.0, 5.0, (GRID_CH_V2, V2_GRID_H, V2_GRID_W), np.float32),
+                "globe":  gym.spaces.Box(-5.0, 5.0, (GLOBE_CH, GLOBE_SZ, GLOBE_SZ), np.float32),
+                "vector": gym.spaces.Box(-5.0, 5.0, (VEC_DIM_V2,), np.float32),
+            })
+            self._obs_fn = _to_obs_v2          # module fn: dict state -> Dict obs
+        else:
+            self.observation_space = gym.spaces.Box(
+                low=-5.0, high=5.0, shape=(OBS_DIM,), dtype=np.float32
+            )
+            self._obs_fn = self._to_obs        # bound method: dict state -> flat obs
 
         self.action_repeat  = action_repeat
         self._pw = self._browser = self._page = None
@@ -277,7 +543,7 @@ class SpaceHuggersEnv(gym.Env):
         self._last_enemy_dist = None
         self._step_n          = 0
 
-        return self._to_obs(self._raw()), {}
+        return self._obs_fn(self._raw()), {}
 
     def step(self, action):
         # ── Action repeat ─────────────────────────────────────────────────────
@@ -287,7 +553,7 @@ class SpaceHuggersEnv(gym.Env):
         #   • Longer commitment window improves temporal credit assignment
         #   • Same 25-min wall-clock budget (7 500 steps × 200 ms)
         total_reward = 0.0
-        obs          = np.zeros(OBS_DIM, dtype=np.float32)
+        obs          = self._obs_fn(None)      # zero obs (flat array or Dict per obs_version)
         info         = {}
         terminated   = False
         truncated    = False
@@ -297,7 +563,7 @@ class SpaceHuggersEnv(gym.Env):
             time.sleep(self.frame_ms / 1000.0)
 
             s   = self._raw()
-            obs = self._to_obs(s)
+            obs = self._obs_fn(s)
 
             kills     = s["kills"]     if s else 0
             lives     = s["lives"]     if s else self._last_lives
@@ -358,7 +624,7 @@ class SpaceHuggersEnv(gym.Env):
                                     and not on_ladder and vert_act == 1
                                     and shoot_act == 0) else 0.0
 
-            survive = 0.002
+            survive = 0.0   # removed +0.002/step survival bonus — it fueled turtling
 
             reward = (kill_r - death_p + level_r + approach_r
                       + fire_r + ladder_r + wall_climb_r + air_dodge_r + survive)

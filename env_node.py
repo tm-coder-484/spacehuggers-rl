@@ -76,7 +76,11 @@ class NodeEnv(gym.Env):
         self._kill()
         env = dict(os.environ, GAME_PATH=self.game_path)
         self._proc = subprocess.Popen(
-            ["node", _GAME_SERVER],
+            ["node",
+             "--max-old-space-size=160",  # game peaks ~95 MB; 160 gives headroom
+             "--max-semi-space-size=2",   # shrink GC nursery (default 8-16 MB)
+             "--v8-pool-size=0",          # no background compiler threads
+             _GAME_SERVER],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -252,7 +256,7 @@ class NodeEnv(gym.Env):
                                 and not on_ladder and vert_act == 1
                                 and shoot_act == 0) else 0.0
 
-        survive = 0.002
+        survive = 0.0   # removed +0.002/step survival bonus — it fueled turtling
 
         reward = (kill_r - death_p + level_r + approach_r
                   + fire_r + ladder_r + wall_climb_r + air_dodge_r + survive)

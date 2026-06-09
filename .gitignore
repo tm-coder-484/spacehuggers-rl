@@ -1,18 +1,51 @@
-# Model checkpoints — track latest only, ignore numbered + logs
-game_models/ppo_sh_[0-9]*.zip
-game_logs/
+# ─────────────────────────────────────────────────────────────────────────────
+#  .gitignore — keep the repo lean for cloud handoff.
+#  KEEP: code, README, the game (SpaceHuggers-main/), and the CURRENT v2 model
+#        (game_models_v2/ppo_sh_latest|best|bestlevel.zip).
+#  DROP: archived/failed experiments, dated backups, rolling checkpoints,
+#        TensorBoard logs, and regenerable visualization artifacts.
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Python
+# ── Archived experiments & dated backups (NOT needed to continue the work) ───
+game_models_v2_farm_*/
+game_models_v2_farm_exit_*/
+game_models_v2_pre_perception_*/
+game_models_v2_flat_old_*/
+game_logs_v2_farm_*/
+game_logs_v2_pre_perception_*/
+game_logs_v2_flat_old_*/
+game_models_backup_*/
+game_logs_backup_*/
+back1234/
+
+# ── Rolling / numbered checkpoints — keep only latest/best/bestlevel ──────────
+game_models_v2/ppo_sh_*_steps.zip
+game_models/ppo_sh_[0-9]*.zip
+# stale root-level v1-era artifact (the real one is game_models_v2/ppo_sh_latest.zip)
+/ppo_sh_latest.zip
+
+# ── TensorBoard logs (regenerated each run) ──────────────────────────────────
+game_logs/
+game_logs_v2/
+
+# ── Regenerable visualization artifacts ──────────────────────────────────────
+weight_viz/
+weights_vis/
+*.onnx
+spacehuggers_decoded_circuit.png
+
+# ── Transient run output ─────────────────────────────────────────────────────
+train_log.txt
+watch_dumps.txt
+train_node.log
+Output.txt
+
+# ── Python / OS / env ────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *.egg-info/
 .env
 venv/
 .venv/
-
-# OS
 .DS_Store
 Thumbs.db
-
-# Game (cloned separately via setup.sh)
-SpaceHuggers-main/
