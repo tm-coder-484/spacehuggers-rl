@@ -1,0 +1,104 @@
+============================================================
+ train --p 1     <- 6 envs,  E-core pin
+ train --p 2     <- 6 envs,  P-core pin
+ train --p 3     <- 12 envs, no pin
+ train --p 4     <- 12 envs, E-core pin
+ train           <- default: 12 envs, no pin
+ train --pin p   <- default but pinned to P (direct form)
+
+ add --v to ANY of the above for a live temp/clock monitor window
+   e.g.  train --p 4 --v      train --v
+ add --v2 for Tier-2: richer obs + [512,768,512] net (fresh, separate)
+   e.g.  train --p 3 --v2     (needs node-workers; uses game_models_v2/)
+============================================================
+
+[preset 3]  12 envs, no pin
+=== TIER-2 (--v2) === models→game_models_v2/  obs=Dict(grid 6x9x13 + globe 3x8x8 + vec 106)  2xCNN+MLP→[512, 768, 512]  (separate namespace, trains fresh)
+Backend: node-workers  |  12 env(s)  |  action_repeat=3
+[node] [game_server_workers] ready
+Resuming: game_models_v2\ppo_sh_latest.zip  |  done 7,290,678  |  target forever  |  ent_coef=0.015  |  gamma=0.997
+  steps    7,295,682  |  ep_reward  250.66  (best 250.66)  |  max_level 3  |     67 sps  |  0.02 h
+  steps    7,300,686  |  ep_reward  250.66  (best 250.66)  |  max_level 3  |     49 sps  |  0.06 h
+  steps    7,305,690  |  ep_reward  250.66  (best 250.66)  |  max_level 3  |     44 sps  |  0.09 h
+  steps    7,310,694  |  ep_reward  250.66  (best 250.66)  |  max_level 3  |     42 sps  |  0.13 h
+  steps    7,315,698  |  ep_reward  250.66  (best 250.66)  |  max_level 3  |     40 sps  |  0.18 h
+  steps    7,320,702  |  ep_reward  250.66  (best 250.66)  |  max_level 3  |     42 sps  |  0.20 h
+  steps    7,325,706  |  ep_reward  250.66  (best 250.66)  |  max_level 3  |     40 sps  |  0.24 h
+  steps    7,330,710  |  ep_reward  250.66  (best 250.66)  |  max_level 3  |     40 sps  |  0.28 h
+  steps    7,335,714  |  ep_reward  250.66  (best 250.66)  |  max_level 3  |     39 sps  |  0.32 h
+  steps    7,340,718  |  ep_reward  250.66  (best 250.66)  |  max_level 3  |     39 sps  |  0.36 h
+  steps    7,345,722  |  ep_reward  250.66  (best 250.66)  |  max_level 3  |     40 sps  |  0.38 h
+  steps    7,350,726  |  ep_reward  250.66  (best 250.66)  |  max_level 3  |     39 sps  |  0.43 h
+  steps    7,355,730  |  ep_reward  250.66  (best 250.66)  |  max_level 3  |     39 sps  |  0.47 h
+  steps    7,360,734  |  ep_reward  250.66  (best 250.66)  |  max_level 3  |     38 sps  |  0.51 h
+  steps    7,365,738  |  ep_reward  250.66  (best 250.66)  |  max_level 3  |     38 sps  |  0.55 h
+  steps    7,370,742  |  ep_reward  250.66  (best 250.66)  |  max_level 3  |     38 sps  |  0.58 h
+  ep  step   7,371,222  |  reward   -20.3  |  kills   2  |  level 1
+  steps    7,375,746  |  ep_reward  249.01  (best 250.66)  |  max_level 3  |     39 sps  |  0.61 h
+  ep  step   7,380,318  |  reward   118.4  |  kills  14  |  level 1
+  steps    7,380,750  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     39 sps  |  0.65 h
+  steps    7,385,754  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     39 sps  |  0.69 h
+  steps    7,390,758  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     38 sps  |  0.72 h
+  steps    7,395,762  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     38 sps  |  0.76 h
+  steps    7,400,766  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     39 sps  |  0.79 h
+  steps    7,405,770  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     39 sps  |  0.83 h
+  steps    7,410,774  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     39 sps  |  0.87 h
+  steps    7,415,778  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     38 sps  |  0.91 h
+  steps    7,420,782  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     38 sps  |  0.94 h
+  steps    7,425,786  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     39 sps  |  0.97 h
+  steps    7,430,790  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     39 sps  |  1.01 h
+  steps    7,435,794  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     38 sps  |  1.05 h
+  steps    7,440,798  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     38 sps  |  1.09 h
+  steps    7,445,802  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     38 sps  |  1.13 h
+  steps    7,450,806  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     38 sps  |  1.17 h
+  steps    7,455,810  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     38 sps  |  1.19 h
+  steps    7,460,814  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     38 sps  |  1.23 h
+  steps    7,465,818  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     38 sps  |  1.27 h
+  steps    7,470,822  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     38 sps  |  1.31 h
+  steps    7,475,826  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     38 sps  |  1.35 h
+  steps    7,480,830  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     39 sps  |  1.37 h
+  steps    7,485,834  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     39 sps  |  1.41 h
+  steps    7,490,838  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     39 sps  |  1.44 h
+  steps    7,495,842  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     39 sps  |  1.48 h
+  steps    7,500,846  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     39 sps  |  1.51 h
+  steps    7,505,850  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     39 sps  |  1.55 h
+  steps    7,510,854  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     39 sps  |  1.57 h
+  steps    7,515,858  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     39 sps  |  1.61 h
+  steps    7,520,862  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     39 sps  |  1.65 h
+  steps    7,525,866  |  ep_reward  246.45  (best 250.66)  |  max_level 3  |     39 sps  |  1.69 h
+  ep  step   7,528,758  |  reward   300.5  |  kills  20  |  level 2
+  steps    7,530,870  |  ep_reward  247.81  (best 250.66)  |  max_level 3  |     39 sps  |  1.72 h
+  steps    7,535,874  |  ep_reward  247.81  (best 250.66)  |  max_level 3  |     39 sps  |  1.75 h
+  steps    7,540,878  |  ep_reward  247.81  (best 250.66)  |  max_level 3  |     39 sps  |  1.78 h
+  steps    7,545,882  |  ep_reward  247.81  (best 250.66)  |  max_level 3  |     39 sps  |  1.82 h
+  steps    7,550,886  |  ep_reward  247.81  (best 250.66)  |  max_level 3  |     39 sps  |  1.85 h
+  steps    7,555,890  |  ep_reward  247.81  (best 250.66)  |  max_level 3  |     39 sps  |  1.89 h
+  steps    7,560,894  |  ep_reward  247.81  (best 250.66)  |  max_level 3  |     39 sps  |  1.91 h
+  steps    7,565,898  |  ep_reward  247.81  (best 250.66)  |  max_level 3  |     39 sps  |  1.95 h
+  steps    7,570,902  |  ep_reward  247.81  (best 250.66)  |  max_level 3  |     39 sps  |  1.98 h
+  steps    7,575,906  |  ep_reward  247.81  (best 250.66)  |  max_level 3  |     39 sps  |  2.02 h
+  steps    7,580,910  |  ep_reward  247.81  (best 250.66)  |  max_level 3  |     39 sps  |  2.06 h
+  steps    7,585,914  |  ep_reward  247.81  (best 250.66)  |  max_level 3  |     39 sps  |  2.10 h
+Traceback (most recent call last):
+  File "D:\tmaco0\My Documents\Downloads\Claude-remote-control\rl-game\train_game.py", line 601, in <module>
+    main(target, args.envs, args.headless.lower() != "false",
+  File "D:\tmaco0\My Documents\Downloads\Claude-remote-control\rl-game\train_game.py", line 514, in main
+    model.learn(
+  File "D:\tmaco0\OneDrive - Department of Education\Documents\Downloads\Sd card\rk-games\python\Lib\site-packages\stable_baselines3\ppo\ppo.py", line 311, in learn
+    return super().learn(
+           ^^^^^^^^^^^^^^
+  File "D:\tmaco0\OneDrive - Department of Education\Documents\Downloads\Sd card\rk-games\python\Lib\site-packages\stable_baselines3\common\on_policy_algorithm.py", line 324, in learn
+    continue_training = self.collect_rollouts(self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\tmaco0\OneDrive - Department of Education\Documents\Downloads\Sd card\rk-games\python\Lib\site-packages\stable_baselines3\common\on_policy_algorithm.py", line 218, in collect_rollouts
+    new_obs, rewards, dones, infos = env.step(clipped_actions)
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\tmaco0\OneDrive - Department of Education\Documents\Downloads\Sd card\rk-games\python\Lib\site-packages\stable_baselines3\common\vec_env\base_vec_env.py", line 222, in step
+    return self.step_wait()
+           ^^^^^^^^^^^^^^^^
+  File "D:\tmaco0\My Documents\Downloads\Claude-remote-control\rl-game\env_node_batch.py", line 535, in step_wait
+    resp   = self._rpc({'type': 'step_batch', 'actions': action_list, 'n': self.action_repeat})
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\tmaco0\My Documents\Downloads\Claude-remote-control\rl-game\env_node_batch.py", line 353, in _rpc
+    raise EOFError('game_server stdout closed unexpectedly')
+EOFError: game_server stdout closed unexpectedly

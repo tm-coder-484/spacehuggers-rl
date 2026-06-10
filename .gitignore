@@ -24,9 +24,9 @@ game_models/ppo_sh_[0-9]*.zip
 # stale root-level v1-era artifact (the real one is game_models_v2/ppo_sh_latest.zip)
 /ppo_sh_latest.zip
 
-# ── TensorBoard logs (regenerated each run) ──────────────────────────────────
+# ── TensorBoard logs ─────────────────────────────────────────────────────────
+# (game_logs_v2 = current v2 run, tracked for the handoff; game_logs = old v1)
 game_logs/
-game_logs_v2/
 
 # ── Regenerable visualization artifacts ──────────────────────────────────────
 weight_viz/
@@ -35,7 +35,7 @@ weights_vis/
 spacehuggers_decoded_circuit.png
 
 # ── Transient run output ─────────────────────────────────────────────────────
-train_log.txt
+# (train_log.txt tracked for the handoff)
 watch_dumps.txt
 train_node.log
 Output.txt
