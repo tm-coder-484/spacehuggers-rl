@@ -625,8 +625,23 @@ grew unboundedly (~4/frame) and per-frame sim cost degraded *linearly within an
 episode*. `_reapParticles()` in `game_server_workers.js` (called each `_step`)
 replicates just the expiry (preserving `destroyCallback`), restoring parity with
 the rendered game. Headless-only (gated on `_HEADLESS_NO_RENDER`); the browser
-watch path renders normally and doesn't need it. This was the single biggest
-throughput win — apply it before judging sps.
+watch path renders normally and doesn't need it.
+
+**Further headless throughput opts.** On top of the reaper: (1) **particle
+stillbirth** — `ParticleEmitter.emitParticle` still *spawns* each particle (so the
+shared `rand()` stream is identical — critical for sim parity) but marks it
+`destroyed` immediately, so it never runs a single `update()` (supersedes the
+reaper for emitter particles; reaper kept as a catch-all). (2) **`_tcGet`** — a
+direct `tileCollision[y*W+x]` read replacing `getTileCollisionData(vec2(...))` in
+the BFS hot paths (`cost`, `_canAscendTo`, `_buildCoarseMap`, the jump-gate),
+dropping a `Vector2` allocation per tile read. (3) **Reused typed-array BFS
+buffers** — a per-`R` `Int16Array` dist grid + `Int8Array` ascend-memo, reused
+across frames instead of reallocating, with the jump-reach check memoized per cell.
+(4) **JSON-string IPC** — workers `JSON.stringify` the state once and the main
+thread concatenates the strings, avoiding a structured-clone of the big nested
+state object across the worker boundary. All preserve sim/obs behaviour exactly
+(validated: shapes, all-finite obs, and BFS geo gradients unchanged). These were
+the biggest throughput wins — apply them before judging sps.
 
 ---
 

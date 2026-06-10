@@ -89,6 +89,26 @@ const FILES = [
 // resetGame() is defined as const/let in app.js and lives in the concatenated
 // script's lexical scope — _resetAndStep wraps it so it's accessible here.
 const RUNTIME_FUNCS = `
+// ── Headless particle stillbirth (perf) ─────────────────────────────────────
+// Particles are pure cosmetics in headless: they are not observed, never
+// collide with gameplay objects, and their only side effect
+// (persistentParticleDestroyCallback) draws to the tile layer via the noop
+// canvas proxy. BUT emitParticle() consumes a fixed sequence of rand() calls
+// that gameplay code shares, so we cannot skip spawning without shifting the
+// RNG stream. Instead: spawn (identical RNG draws), then mark destroyed
+// immediately — engine.js filters destroyed objects at end of frame, so the
+// particle never pays a single update(). Gate on _HEADLESS_NO_RENDER;
+// RENDER=1 A/B runs keep full particle simulation.
+if (typeof ParticleEmitter !== 'undefined' && global._HEADLESS_NO_RENDER) {
+    const _origEmitParticle = ParticleEmitter.prototype.emitParticle;
+    ParticleEmitter.prototype.emitParticle = function() {
+        const p = _origEmitParticle.call(this);
+        p.destroyCallback = 0;   // decal draw is a noop headless anyway
+        p.destroyed = 1;         // removed by engine.js end-of-frame filter
+        return p;
+    };
+}
+
 function _step() {
     if (global._rafCallback) {
         var cb = global._rafCallback;
@@ -147,10 +167,16 @@ function _setAIInput(m, v, sh, dg, gr) {
 // this the field promised impossible "float straight up" routes to high lone
 // platforms (and straight into ceilings), and the agent got stuck under them.
 var _JUMP_REACH = 8;
+// Direct tile-collision read: identical semantics to getTileCollisionData
+// (arrayCheck -> 0 out of bounds) but no Vector2 allocation. Nav hot path only.
+function _tcGet(x, y) {
+    var W = tileCollisionSize.x;
+    return (x>=0 && y>=0 && x<W && y<tileCollisionSize.y) ? tileCollision[y*W+x] : 0;
+}
 function _canAscendTo(x, y) {
-    if (getTileCollisionData(vec2(x-1,y))>0 || getTileCollisionData(vec2(x+1,y))>0) return true;  // wall-climb
+    if (_tcGet(x-1,y)>0 || _tcGet(x+1,y)>0) return true;  // wall-climb
     for (var k=1; k<=_JUMP_REACH; k++) {
-        var t=getTileCollisionData(vec2(x, y-k));
+        var t=_tcGet(x, y-k);
         if (t>0 || t===tileType_ladder) return true;   // solid ground / ladder to launch from
     }
     return false;
@@ -161,9 +187,12 @@ function _canAscendTo(x, y) {
 // bullet destroy-chance in appObjects.collideWithTile (glass 100%, dirt 20%,
 // base/pipe/solid 5%). This makes buried enemies reachable, so geoDist becomes a
 // "dig-distance" and the existing geodesic reward rewards digging toward them.
+var _bfsBufs = {};   // per-R reused buffers: dd (Int16) + asc memo (Int8)
 function _bfsFrom(sx, sy, cx, cy, R) {
     var SZ=2*R+1, minx=cx-R, miny=cy-R, maxx=cx+R, maxy=cy+R;
-    var dd=new Array(SZ*SZ); for (var _i=0;_i<dd.length;_i++) dd[_i]=-1;
+    var buf = _bfsBufs[SZ] || (_bfsBufs[SZ] = { dd: new Int16Array(SZ*SZ), asc: new Int8Array(SZ*SZ) });
+    var dd = buf.dd; dd.fill(-1);
+    var asc = buf.asc; asc.fill(0);   // 0 unknown, 1 yes, 2 no
     function gi(x,y){ return (y-miny)*SZ+(x-minx); }
     // DIRECTIONAL edge cost = real traversal TIME. The gun fires HORIZONTALLY only,
     // so destructible tiles can only be dug on a move with a horizontal component; a
@@ -176,7 +205,7 @@ function _bfsFrom(sx, sy, cx, cy, R) {
     // Walk cost stays 1 (== old binary-BFS unit step) so walkable enemies produce an
     // IDENTICAL signal to the pre-dig model -> perfect warm-start transfer.
     function cost(fx, fy, tx, ty){
-        var t=getTileCollisionData(vec2(tx,ty));
+        var t=_tcGet(tx,ty);
         if (t<=0 || t===tileType_ladder) return 1;   // empty / ladder: walk, climb, jump, fall
         if (tx===fx) return -1;                       // pure vertical into a destructible tile: can't dig up/down
         if (t===tileType_glass) return 1;             // shoot through window (horizontal)
@@ -200,7 +229,11 @@ function _bfsFrom(sx, sy, cx, cy, R) {
                 var nidx=gi(nx,ny);
                 var c=cost(x,y,nx,ny);
                 if (c<0) continue;                      // blocked (e.g. pure-vertical dig)
-                if (ny>y && getTileCollisionData(vec2(nx,ny))===tileType_empty && !_canAscendTo(nx,ny)) continue;  // can't jump that high through open air
+                if (ny>y && _tcGet(nx,ny)===tileType_empty) {   // memoised jump-reach check
+                    var av=asc[nidx];
+                    if (!av) { av = _canAscendTo(nx,ny) ? 1 : 2; asc[nidx]=av; }
+                    if (av===2) continue;                       // can't jump that high through open air
+                }
                 var nd=dcur+c;
                 if (nd<=MAXC && (dd[nidx]===-1 || nd<dd[nidx])) {
                     dd[nidx]=nd;
@@ -228,7 +261,7 @@ function _buildCoarseMap() {
     for (var cy=0; cy<CH; cy++) for (var cx=0; cx<CW; cx++) {
         var open=0, dirt=0;
         for (var ty=0; ty<_COARSE_CELL; ty++) for (var tx=0; tx<_COARSE_CELL; tx++) {
-            var t=getTileCollisionData(vec2(cx*_COARSE_CELL+tx, cy*_COARSE_CELL+ty));
+            var t=_tcGet(cx*_COARSE_CELL+tx, cy*_COARSE_CELL+ty);
             if (t<=0 || t===tileType_ladder || t===tileType_glass) open++;
             else if (t===tileType_dirt) dirt++;
         }
@@ -622,13 +655,13 @@ if (!isMainThread) {
             if (msg.type === 'step') {
                 _setAIInput(msg.action[0], msg.action[1], msg.action[2], msg.action[3], msg.action[4]);
                 for (let s = 0; s < msg.n; s++) _step();
-                port.postMessage({ type: 'state', state: _getGameState() });
+                port.postMessage({ type: 'state', json: JSON.stringify(_getGameState()) });
             } else if (msg.type === 'reset') {
-                port.postMessage({ type: 'state', state: _resetAndStep() });
+                port.postMessage({ type: 'state', json: JSON.stringify(_resetAndStep()) });
             }
         } catch (err) {
             process.stderr.write(`[worker ${workerIndex}] error handling message: ${err.stack}\n`);
-            port.postMessage({ type: 'state', state: null });
+            port.postMessage({ type: 'state', json: 'null' });
         }
     });
 
@@ -696,7 +729,7 @@ function sendAll(msgs) {
     return Promise.all(
         ports.map((port, i) =>
             new Promise((resolve) => {
-                port.once('message', (resp) => resolve(resp.state));
+                port.once('message', (resp) => resolve(resp.json));
                 port.postMessage(msgs[i]);
             })
         )
@@ -708,7 +741,7 @@ function sendSubset(indices, msgs) {
     return Promise.all(
         indices.map((i, j) =>
             new Promise((resolve) => {
-                ports[i].once('message', (resp) => resolve(resp.state));
+                ports[i].once('message', (resp) => resolve(resp.json));
                 ports[i].postMessage(msgs[j]);
             })
         )
@@ -743,14 +776,14 @@ async function runServer() {
                 n,
             }));
             const states = await sendAll(msgs);
-            process.stdout.write(JSON.stringify({ type: 'states', states }) + '\n');
+            process.stdout.write('{"type":"states","states":[' + states.join(',') + ']}\n');
             continue;
         }
 
         if (msg.type === 'reset_all') {
             const msgs = ports.map(() => ({ type: 'reset' }));
             const states = await sendAll(msgs);
-            process.stdout.write(JSON.stringify({ type: 'states', states }) + '\n');
+            process.stdout.write('{"type":"states","states":[' + states.join(',') + ']}\n');
             continue;
         }
 
@@ -758,7 +791,7 @@ async function runServer() {
             const indices = msg.indices;
             const msgs    = indices.map(() => ({ type: 'reset' }));
             const states  = await sendSubset(indices, msgs);
-            process.stdout.write(JSON.stringify({ type: 'states', states }) + '\n');
+            process.stdout.write('{"type":"states","states":[' + states.join(',') + ']}\n');
             continue;
         }
     }
