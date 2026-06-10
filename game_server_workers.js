@@ -99,6 +99,18 @@ const RUNTIME_FUNCS = `
 // immediately — engine.js filters destroyed objects at end of frame, so the
 // particle never pays a single update(). Gate on _HEADLESS_NO_RENDER;
 // RENDER=1 A/B runs keep full particle simulation.
+// ── Headless tile-layer draw skip (perf) ────────────────────────────────────
+// TileLayer.setData() stores gameplay-readable tile data AND redraws the tile
+// to an offscreen canvas. The canvas half is pure pixels (noop Proxy headless)
+// but still allocates vec2s + runs context calls per destroyed tile — the
+// agent shoots constantly, so this is hot. Keep the data writes; skip draws.
+if (typeof TileLayer !== 'undefined' && global._HEADLESS_NO_RENDER) {
+    TileLayer.prototype.drawTileData    = function() {};
+    TileLayer.prototype.drawAllTileData = function() {};
+    TileLayer.prototype.redraw          = function() {};
+    TileLayer.prototype.drawTile        = function() {};
+    TileLayer.prototype.drawCanvas2D    = function() {};
+}
 if (typeof ParticleEmitter !== 'undefined' && global._HEADLESS_NO_RENDER) {
     const _origEmitParticle = ParticleEmitter.prototype.emitParticle;
     ParticleEmitter.prototype.emitParticle = function() {

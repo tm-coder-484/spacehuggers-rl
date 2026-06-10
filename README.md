@@ -639,9 +639,15 @@ buffers** — a per-`R` `Int16Array` dist grid + `Int8Array` ascend-memo, reused
 across frames instead of reallocating, with the jump-reach check memoized per cell.
 (4) **JSON-string IPC** — workers `JSON.stringify` the state once and the main
 thread concatenates the strings, avoiding a structured-clone of the big nested
-state object across the worker boundary. All preserve sim/obs behaviour exactly
-(validated: shapes, all-finite obs, and BFS geo gradients unchanged). These were
-the biggest throughput wins — apply them before judging sps.
+state object across the worker boundary. (5) **Tile-layer draw skip** —
+`TileLayer`'s per-tile canvas redraw (`drawTileData`/`redraw`/etc., triggered on
+every tile the agent shoots out) is no-op'd in headless, while the
+gameplay-readable tile *data* writes are kept. Tile **collision** is a separate
+array (`setTileCollisionData` → `tileCollision[]`, read by `_tcGet`), so digging
+and navigation are unaffected — only the cosmetic redraw is dropped. All preserve
+sim/obs behaviour exactly (validated: shapes, all-finite obs, and BFS geo
+gradients unchanged). These were the biggest throughput wins — apply them before
+judging sps.
 
 ---
 
