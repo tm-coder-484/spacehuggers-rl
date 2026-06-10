@@ -618,6 +618,16 @@ power/thermal limited. `--pin {none,p,e,all}` pins the Python + Node processes:
 Throughput is ~40–70 steps/s depending on env count and pinning. The geodesic +
 coarse BFS run inside the Node workers; they are cheap relative to the game sim.
 
+**Headless particle reaper (~3× sps).** With rendering skipped
+(`_HEADLESS_NO_RENDER`), the game's only particle-expiry path
+(`Particle.render`) never runs, so particles became immortal — `engineObjects`
+grew unboundedly (~4/frame) and per-frame sim cost degraded *linearly within an
+episode*. `_reapParticles()` in `game_server_workers.js` (called each `_step`)
+replicates just the expiry (preserving `destroyCallback`), restoring parity with
+the rendered game. Headless-only (gated on `_HEADLESS_NO_RENDER`); the browser
+watch path renders normally and doesn't need it. This was the single biggest
+throughput win — apply it before judging sps.
+
 ---
 
 ## 14. Watching & Introspection Tools

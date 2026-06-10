@@ -95,6 +95,27 @@ function _step() {
         global._rafCallback = null;
         global._frameCount++;
         cb(global._frameCount * (1000 / 60));
+        _reapParticles();
+    }
+}
+
+// Headless particle reaper (perf fix, ~3x+ sps).
+// Particle.render() is the ONLY place particles set destroyed=1 (when
+// age >= lifeTime). With rendering skipped (_HEADLESS_NO_RENDER), particles
+// were immortal: engineObjects grew unboundedly (~4/frame) and every frame's
+// update loop dragged thousands of zombie particles, so sim speed degraded
+// linearly within an episode. Replicate just the expiry side-effect here.
+// destroyCallback is preserved so e.g. persistent-decal spawns still fire,
+// keeping headless behaviour identical to the rendered game.
+function _reapParticles() {
+    if (!global._HEADLESS_NO_RENDER) return;
+    for (var i = engineObjects.length; i--;) {
+        var o = engineObjects[i];
+        if (o.lifeTime && !o.destroyed && o.spawnTime != undefined
+            && time - o.spawnTime >= o.lifeTime) {
+            o.destroyCallback && o.destroyCallback(o);
+            o.destroyed = 1;
+        }
     }
 }
 
